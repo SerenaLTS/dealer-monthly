@@ -587,6 +587,37 @@ with ranking_d:
     fig_bottom_conversion.update_layout(yaxis={"categoryorder": "total ascending"})
     st.plotly_chart(fig_bottom_conversion, use_container_width=True)
 
+low_enquiry_dealers = dealer_summary.sort_values(
+    ["dealer_enquiry", "sales", "dealer_name"],
+    ascending=[True, True, True],
+).head(15)
+
+st.markdown("##### Dealers with Lowest Enquiries")
+st.caption("Focus list: dealers receiving the fewest enquiries under the current filters.")
+fig_low_enquiries = px.bar(
+    low_enquiry_dealers,
+    x="dealer_enquiry",
+    y="dealer_name",
+    orientation="h",
+    color="active",
+    title="Dealer Enquiry Ranking - Lowest First",
+    labels={"dealer_enquiry": "Enquiries", "dealer_name": "Dealer", "active": "Active Status"},
+)
+fig_low_enquiries.update_layout(yaxis={"categoryorder": "total descending"})
+st.plotly_chart(fig_low_enquiries, use_container_width=True)
+
+st.dataframe(
+    display_summary_table(
+        low_enquiry_dealers[
+            ["dealer_name", "dealer_state", "active", "dealer_enquiry", "sales", "conversion_rate"]
+        ],
+        dealer_table_map,
+        ["Conversion Rate"],
+    ),
+    use_container_width=True,
+    hide_index=True,
+)
+
 with st.expander("View dealer detail table"):
     st.dataframe(display_summary_table(dealer_summary, dealer_table_map, rate_display_cols), use_container_width=True, hide_index=True)
 
