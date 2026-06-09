@@ -251,9 +251,10 @@ def format_rate_columns(frame, columns):
 
 df, sales_cols = load_data()
 
-st.title("Monthly Dealer Enquiry & Sales Dashboard")
+st.title("T9 Monthly Dealer Dashboard")
+st.caption("Management view of dealer enquiries, sales, conversion, and dealer performance.")
 
-with st.expander("Data source & definitions"):
+with st.expander("Data sources, definitions, and limitations"):
     st.markdown(
         """
         **Data sources**
@@ -267,7 +268,9 @@ with st.expander("Data source & definitions"):
         - Private conversion = Private Local Delivery sales / non-FleetEnquiry enquiries
         - Fleet conversion = Fleet, Large Fleet, Local Government, and Company Capitalisation sales / FleetEnquiry
         - Dealer Demo sales are shown in sales totals and sales breakdowns, but excluded from Private/Fleet conversion
-        - Fleet conversion should be treated as directional only, because FleetEnquiry may not capture every fleet lead that later becomes a fleet sale
+
+        **Important limitation**
+        - Fleet conversion should be treated as directional only, because FleetEnquiry may not capture every fleet lead that later becomes a fleet sale.
         """
     )
 
@@ -298,73 +301,54 @@ if filtered.empty:
     st.warning("No data matches the selected filters.")
     st.stop()
 
-total_enquiry = filtered["total_enquiry"].sum()
-total_sales = filtered["total_sales"].sum()
-private_enquiry = filtered["private_enquiry"].sum()
-private_sales = filtered["private_sales"].sum()
-fleet_enquiry = filtered["fleet_enquiry"].sum()
-fleet_sales = filtered["fleet_sales"].sum()
-total_dealers = filtered["dealer_name"].nunique()
-active_dealers = filtered.loc[filtered["active_flag"], "dealer_name"].nunique()
-active_states = filtered["dealer_state"].nunique()
-conversion_rate = total_sales / total_enquiry if total_enquiry else 0
-private_conversion_rate = private_sales / private_enquiry if private_enquiry else 0
-fleet_conversion_rate = fleet_sales / fleet_enquiry if fleet_enquiry else 0
 
-kpi1, kpi2, kpi3, kpi4, kpi5 = st.columns(5)
-kpi1.metric("Dealer Enquiry", format_int(total_enquiry))
-kpi2.metric("Sales", format_int(total_sales))
-kpi3.metric("Conversion", f"{conversion_rate:.1%}")
-kpi4.metric("Private Conv.", f"{private_conversion_rate:.1%}")
-kpi5.metric("Fleet Conv.", f"{fleet_conversion_rate:.1%}")
+def add_conversion_columns(frame):
+    out = frame.copy()
+    out["conversion_rate"] = (out["sales"] / out["dealer_enquiry"]).where(out["dealer_enquiry"] > 0, 0)
+    out["private_conversion_rate"] = (out["private_sales"] / out["private_enquiry"]).where(out["private_enquiry"] > 0, 0)
+    out["fleet_conversion_rate"] = (out["fleet_sales"] / out["fleet_enquiry"]).where(out["fleet_enquiry"] > 0, 0)
+    return out
 
-kpi6, kpi7, kpi8 = st.columns(3)
-kpi6.metric("Dealers", format_int(total_dealers))
-kpi7.metric("Active Dealers", format_int(active_dealers))
-kpi8.metric("States", format_int(active_states))
 
-st.markdown("---")
+def display_summary_table(frame, column_map, rate_columns):
+    return format_rate_columns(frame.rename(columns=column_map), rate_columns)
+
 
 monthly = (
-    filtered.groupby(["month", "month_order"], dropna=False)[["total_enquiry", "total_sales"] + ENQUIRY_COLS]
+    filtered.groupby(["month", "month_order"], dropna=False)[
+        [
+            "total_enquiry",
+            "total_sales",
+            "private_enquiry",
+            "private_sales",
+            "fleet_enquiry",
+            "fleet_sales",
+        ]
+        + ENQUIRY_COLS
+    ]
     .sum()
     .reset_index()
     .sort_values("month_order")
 )
-monthly_enquiry_melted = monthly.melt(
-    id_vars=["month", "month_order"],
-    value_vars=ENQUIRY_COLS,
-    var_name="channel",
-    value_name="enquiries",
+monthly["conversion_rate"] = (monthly["total_sales"] / monthly["total_enquiry"]).where(monthly["total_enquiry"] > 0, 0)
+monthly["private_conversion_rate"] = (monthly["private_sales"] / monthly["private_enquiry"]).where(monthly["private_enquiry"] > 0, 0)
+monthly["fleet_conversion_rate"] = (monthly["fleet_sales"] / monthly["fleet_enquiry"]).where(monthly["fleet_enquiry"] > 0, 0)
+
+dealer_summary = (
+    filtered.groupby(["dealer_name", "dealer_state", "active"], dropna=False)
+    .agg(
+        dealer_enquiry=("total_enquiry", "sum"),
+        sales=("total_sales", "sum"),
+        private_enquiry=("private_enquiry", "sum"),
+        private_sales=("private_sales", "sum"),
+        fleet_enquiry=("fleet_enquiry", "sum"),
+        fleet_sales=("fleet_sales", "sum"),
+        active_months=("month", "nunique"),
+    )
+    .reset_index()
+    .sort_values(["sales", "dealer_enquiry"], ascending=False)
 )
-monthly_enquiry_melted["channel"] = monthly_enquiry_melted["channel"].map(ENQUIRY_LABELS)
-
-st.subheader("Monthly Summary - Filtered All Dealers")
-st.caption("Scope: all dealers matching the Month and State filters.")
-summary_left, summary_right = st.columns([2, 1])
-
-with summary_left:
-    fig_monthly_enquiry = px.bar(
-        monthly_enquiry_melted,
-        x="month",
-        y="enquiries",
-        color="channel",
-        title="Monthly Dealer Enquiry Breakdown by Channel",
-        labels={"month": "Month", "enquiries": "Dealer Enquiry", "channel": "Channel"},
-    )
-    st.plotly_chart(fig_monthly_enquiry, use_container_width=True)
-
-with summary_right:
-    fig_monthly_sales = px.bar(
-        monthly,
-        x="month",
-        y="total_sales",
-        title="Monthly Sales Total",
-        labels={"month": "Month", "total_sales": "Sales"},
-    )
-    st.plotly_chart(fig_monthly_sales, use_container_width=True)
-
-left, right = st.columns(2)
+dealer_summary = add_conversion_columns(dealer_summary)
 
 state_summary = (
     filtered.groupby("dealer_state", dropna=False)
@@ -382,129 +366,292 @@ state_summary = (
     .sort_values("dealer_enquiry", ascending=False)
 )
 state_summary["inactive_dealers"] = state_summary["dealers"] - state_summary["active_dealers"]
-state_summary["conversion_rate"] = (
-    state_summary["sales"] / state_summary["dealer_enquiry"]
-).where(state_summary["dealer_enquiry"] > 0, 0)
-state_summary["private_conversion_rate"] = (
-    state_summary["private_sales"] / state_summary["private_enquiry"]
-).where(state_summary["private_enquiry"] > 0, 0)
-state_summary["fleet_conversion_rate"] = (
-    state_summary["fleet_sales"] / state_summary["fleet_enquiry"]
-).where(state_summary["fleet_enquiry"] > 0, 0)
+state_summary = add_conversion_columns(state_summary)
 
-with left:
-    fig_state_enquiry = px.bar(
+total_enquiry = filtered["total_enquiry"].sum()
+total_sales = filtered["total_sales"].sum()
+private_enquiry = filtered["private_enquiry"].sum()
+private_sales = filtered["private_sales"].sum()
+fleet_enquiry = filtered["fleet_enquiry"].sum()
+fleet_sales = filtered["fleet_sales"].sum()
+total_dealers = filtered["dealer_name"].nunique()
+active_dealers = filtered.loc[filtered["active_flag"], "dealer_name"].nunique()
+active_states = filtered["dealer_state"].nunique()
+conversion_rate = total_sales / total_enquiry if total_enquiry else 0
+private_conversion_rate = private_sales / private_enquiry if private_enquiry else 0
+fleet_conversion_rate = fleet_sales / fleet_enquiry if fleet_enquiry else 0
+
+rankable = dealer_summary[dealer_summary["dealer_enquiry"] > 0].copy()
+top_sales = dealer_summary.sort_values(["sales", "dealer_enquiry"], ascending=False).head(5)
+top_conversion = rankable.sort_values(["conversion_rate", "sales"], ascending=False).head(5)
+bottom_conversion = rankable.sort_values(["conversion_rate", "sales"], ascending=[True, True]).head(5)
+
+dealer_table_map = {
+    "dealer_name": "Dealer",
+    "dealer_state": "State",
+    "active": "Active",
+    "dealer_enquiry": "Enquiries",
+    "sales": "Sales",
+    "conversion_rate": "Conversion Rate",
+    "private_enquiry": "Private Enquiries",
+    "private_sales": "Private Sales",
+    "private_conversion_rate": "Private Conversion Rate",
+    "fleet_enquiry": "Fleet Enquiries",
+    "fleet_sales": "Fleet Sales",
+    "fleet_conversion_rate": "Fleet Conversion Rate",
+    "active_months": "Active Months",
+}
+rate_display_cols = ["Conversion Rate", "Private Conversion Rate", "Fleet Conversion Rate"]
+
+st.markdown("## Executive Summary")
+kpi1, kpi2, kpi3, kpi4 = st.columns(4)
+kpi1.metric("Total Enquiries", format_int(total_enquiry))
+kpi2.metric("Total Sales", format_int(total_sales))
+kpi3.metric("Overall Conversion", f"{conversion_rate:.1%}")
+kpi4.metric("Private Conversion", f"{private_conversion_rate:.1%}")
+
+kpi5, kpi6, kpi7, kpi8 = st.columns(4)
+kpi5.metric("Fleet Conversion", f"{fleet_conversion_rate:.1%}")
+kpi6.metric("Active Dealers", format_int(active_dealers))
+kpi7.metric("Total Dealers", format_int(total_dealers))
+kpi8.metric("States Covered", format_int(active_states))
+
+top_a, top_b, top_c = st.columns(3)
+ranking_cols = ["dealer_name", "sales", "dealer_enquiry", "conversion_rate"]
+with top_a:
+    st.markdown("##### Top 5 Dealers by Sales")
+    st.dataframe(
+        display_summary_table(top_sales[ranking_cols], dealer_table_map, ["Conversion Rate"]),
+        use_container_width=True,
+        hide_index=True,
+    )
+with top_b:
+    st.markdown("##### Top 5 Dealers by Conversion")
+    st.dataframe(
+        display_summary_table(top_conversion[ranking_cols], dealer_table_map, ["Conversion Rate"]),
+        use_container_width=True,
+        hide_index=True,
+    )
+with top_c:
+    st.markdown("##### Bottom 5 Dealers by Conversion")
+    st.dataframe(
+        display_summary_table(bottom_conversion[ranking_cols], dealer_table_map, ["Conversion Rate"]),
+        use_container_width=True,
+        hide_index=True,
+    )
+
+st.markdown("---")
+st.markdown("## Monthly Trends")
+trend_left, trend_right = st.columns(2)
+monthly_pair = monthly.melt(
+    id_vars=["month", "month_order"],
+    value_vars=["total_enquiry", "total_sales"],
+    var_name="metric",
+    value_name="count",
+)
+monthly_pair["metric"] = monthly_pair["metric"].map({"total_enquiry": "Enquiries", "total_sales": "Sales"})
+with trend_left:
+    fig_monthly_pair = px.bar(
+        monthly_pair,
+        x="month",
+        y="count",
+        color="metric",
+        barmode="group",
+        title="Monthly Enquiries vs Sales",
+        labels={"month": "Month", "count": "Count", "metric": "Metric"},
+    )
+    st.plotly_chart(fig_monthly_pair, use_container_width=True)
+
+monthly_conversion = monthly.melt(
+    id_vars=["month", "month_order"],
+    value_vars=["conversion_rate", "private_conversion_rate", "fleet_conversion_rate"],
+    var_name="conversion_type",
+    value_name="rate",
+)
+monthly_conversion["conversion_type"] = monthly_conversion["conversion_type"].map(
+    {
+        "conversion_rate": "Overall",
+        "private_conversion_rate": "Private",
+        "fleet_conversion_rate": "Fleet",
+    }
+)
+monthly_conversion["conversion_pct"] = monthly_conversion["rate"] * 100
+with trend_right:
+    fig_monthly_conversion = px.line(
+        monthly_conversion,
+        x="month",
+        y="conversion_pct",
+        color="conversion_type",
+        markers=True,
+        title="Monthly Conversion Trend",
+        labels={"month": "Month", "conversion_pct": "Conversion Rate (%)", "conversion_type": "Conversion"},
+    )
+    st.plotly_chart(fig_monthly_conversion, use_container_width=True)
+
+st.markdown("---")
+st.markdown("## State Performance")
+state_chart_left, state_chart_right = st.columns(2)
+with state_chart_left:
+    fig_state_volume = px.bar(
         state_summary,
         x="dealer_state",
-        y="dealer_enquiry",
-        title="Dealer Enquiry by State",
-        labels={"dealer_state": "State", "dealer_enquiry": "Dealer Enquiry"},
+        y=["dealer_enquiry", "sales"],
+        barmode="group",
+        title="State Enquiries and Sales",
+        labels={"dealer_state": "State", "value": "Count", "variable": "Metric"},
     )
-    st.plotly_chart(fig_state_enquiry, use_container_width=True)
-
-with right:
-    fig_state_sales = px.bar(
-        state_summary.sort_values("sales", ascending=False),
+    st.plotly_chart(fig_state_volume, use_container_width=True)
+with state_chart_right:
+    state_ranking = state_summary[state_summary["dealer_enquiry"] > 0].sort_values("conversion_rate", ascending=False)
+    state_ranking["conversion_pct"] = state_ranking["conversion_rate"] * 100
+    fig_state_conversion = px.bar(
+        state_ranking,
         x="dealer_state",
-        y="sales",
-        title="Sales by State",
-        labels={"dealer_state": "State", "sales": "Sales"},
+        y="conversion_pct",
+        title="State Conversion Ranking",
+        labels={"dealer_state": "State", "conversion_pct": "Conversion Rate (%)"},
     )
-    st.plotly_chart(fig_state_sales, use_container_width=True)
+    st.plotly_chart(fig_state_conversion, use_container_width=True)
 
-st.subheader("State Summary - Filtered All Dealers")
-st.caption("Scope: all dealers matching the Month and State filters, grouped by state.")
-st.dataframe(
-    format_rate_columns(
-        state_summary.rename(
-            columns={
-                "dealer_state": "State",
-                "dealer_enquiry": "Dealer Enquiry",
-                "sales": "Sales",
-                "private_enquiry": "Private Enquiry",
-                "private_sales": "Private Sales",
-                "private_conversion_rate": "Private Conversion Rate",
-                "fleet_enquiry": "Fleet Enquiry",
-                "fleet_sales": "Fleet Sales",
-                "fleet_conversion_rate": "Fleet Conversion Rate",
-                "dealers": "Dealers",
-                "active_dealers": "Active Dealers",
-                "inactive_dealers": "Inactive Dealers",
-                "conversion_rate": "Conversion Rate",
-            }
-        ),
-        ["Conversion Rate", "Private Conversion Rate", "Fleet Conversion Rate"],
-    ),
-    use_container_width=True,
-    hide_index=True,
-)
+with st.expander("View state detail table"):
+    state_table_map = {
+        "dealer_state": "State",
+        "dealer_enquiry": "Enquiries",
+        "sales": "Sales",
+        "conversion_rate": "Conversion Rate",
+        "private_enquiry": "Private Enquiries",
+        "private_sales": "Private Sales",
+        "private_conversion_rate": "Private Conversion Rate",
+        "fleet_enquiry": "Fleet Enquiries",
+        "fleet_sales": "Fleet Sales",
+        "fleet_conversion_rate": "Fleet Conversion Rate",
+        "dealers": "Dealers",
+        "active_dealers": "Active Dealers",
+        "inactive_dealers": "Inactive Dealers",
+    }
+    st.dataframe(display_summary_table(state_summary, state_table_map, rate_display_cols), use_container_width=True, hide_index=True)
 
-st.subheader("Dealer Performance - Filtered All Dealers")
-st.caption("Scope: all dealers matching the Month and State filters, grouped by dealer.")
-
-dealer_summary = (
-    filtered.groupby(["dealer_name", "dealer_state", "active"], dropna=False)
-    .agg(
-        dealer_enquiry=("total_enquiry", "sum"),
-        sales=("total_sales", "sum"),
-        private_enquiry=("private_enquiry", "sum"),
-        private_sales=("private_sales", "sum"),
-        fleet_enquiry=("fleet_enquiry", "sum"),
-        fleet_sales=("fleet_sales", "sum"),
-        active_months=("month", "nunique"),
+st.markdown("---")
+st.markdown("## Dealer Ranking")
+ranking_a, ranking_b = st.columns(2)
+with ranking_a:
+    fig_top_sales = px.bar(
+        dealer_summary.sort_values("sales", ascending=False).head(15),
+        x="sales",
+        y="dealer_name",
+        orientation="h",
+        title="Top Dealers by Sales",
+        labels={"sales": "Sales", "dealer_name": "Dealer"},
     )
+    fig_top_sales.update_layout(yaxis={"categoryorder": "total ascending"})
+    st.plotly_chart(fig_top_sales, use_container_width=True)
+
+with ranking_b:
+    fig_top_enquiries = px.bar(
+        dealer_summary.sort_values("dealer_enquiry", ascending=False).head(15),
+        x="dealer_enquiry",
+        y="dealer_name",
+        orientation="h",
+        title="Top Dealers by Enquiries",
+        labels={"dealer_enquiry": "Enquiries", "dealer_name": "Dealer"},
+    )
+    fig_top_enquiries.update_layout(yaxis={"categoryorder": "total ascending"})
+    st.plotly_chart(fig_top_enquiries, use_container_width=True)
+
+ranking_c, ranking_d = st.columns(2)
+with ranking_c:
+    top_conversion_chart = top_conversion.copy()
+    top_conversion_chart["conversion_pct"] = top_conversion_chart["conversion_rate"] * 100
+    fig_top_conversion = px.bar(
+        top_conversion_chart,
+        x="conversion_pct",
+        y="dealer_name",
+        orientation="h",
+        title="Top Dealers by Conversion",
+        labels={"conversion_pct": "Conversion Rate (%)", "dealer_name": "Dealer"},
+    )
+    fig_top_conversion.update_layout(yaxis={"categoryorder": "total ascending"})
+    st.plotly_chart(fig_top_conversion, use_container_width=True)
+
+with ranking_d:
+    bottom_conversion_chart = bottom_conversion.copy()
+    bottom_conversion_chart["conversion_pct"] = bottom_conversion_chart["conversion_rate"] * 100
+    fig_bottom_conversion = px.bar(
+        bottom_conversion_chart,
+        x="conversion_pct",
+        y="dealer_name",
+        orientation="h",
+        title="Lowest Performing Dealers by Conversion",
+        labels={"conversion_pct": "Conversion Rate (%)", "dealer_name": "Dealer"},
+    )
+    fig_bottom_conversion.update_layout(yaxis={"categoryorder": "total ascending"})
+    st.plotly_chart(fig_bottom_conversion, use_container_width=True)
+
+with st.expander("View dealer detail table"):
+    st.dataframe(display_summary_table(dealer_summary, dealer_table_map, rate_display_cols), use_container_width=True, hide_index=True)
+
+st.markdown("---")
+st.markdown("## Enquiry Source Analysis")
+source_totals = (
+    filtered[ENQUIRY_COLS]
+    .sum()
     .reset_index()
-    .sort_values(["sales", "dealer_enquiry"], ascending=False)
+    .rename(columns={"index": "channel", 0: "enquiries"})
 )
-dealer_summary["conversion_rate"] = (
-    dealer_summary["sales"] / dealer_summary["dealer_enquiry"]
-).where(dealer_summary["dealer_enquiry"] > 0, 0)
-dealer_summary["private_conversion_rate"] = (
-    dealer_summary["private_sales"] / dealer_summary["private_enquiry"]
-).where(dealer_summary["private_enquiry"] > 0, 0)
-dealer_summary["fleet_conversion_rate"] = (
-    dealer_summary["fleet_sales"] / dealer_summary["fleet_enquiry"]
-).where(dealer_summary["fleet_enquiry"] > 0, 0)
+source_totals["channel"] = source_totals["channel"].map(ENQUIRY_LABELS)
+source_totals = source_totals.sort_values("enquiries", ascending=False)
+source_left, source_right = st.columns(2)
+with source_left:
+    fig_source_total = px.bar(
+        source_totals,
+        x="channel",
+        y="enquiries",
+        title="Enquiry Source Mix",
+        labels={"channel": "Channel", "enquiries": "Enquiries"},
+    )
+    fig_source_total.update_layout(xaxis_tickangle=-35)
+    st.plotly_chart(fig_source_total, use_container_width=True)
 
-fig_dealer = px.bar(
-    dealer_summary.head(30),
-    x="dealer_name",
-    y=["dealer_enquiry", "sales"],
-    barmode="group",
-    title="Top Dealer Performance",
-    labels={"dealer_name": "Dealer", "value": "Count", "variable": "Metric"},
+monthly_source = monthly.melt(
+    id_vars=["month", "month_order"],
+    value_vars=ENQUIRY_COLS,
+    var_name="channel",
+    value_name="enquiries",
 )
-fig_dealer.update_layout(xaxis_tickangle=-45)
-st.plotly_chart(fig_dealer, use_container_width=True)
+monthly_source["channel"] = monthly_source["channel"].map(ENQUIRY_LABELS)
+with source_right:
+    fig_source_monthly = px.bar(
+        monthly_source,
+        x="month",
+        y="enquiries",
+        color="channel",
+        title="Monthly Enquiry Source Trend",
+        labels={"month": "Month", "enquiries": "Enquiries", "channel": "Channel"},
+    )
+    st.plotly_chart(fig_source_monthly, use_container_width=True)
 
-st.dataframe(
-    format_rate_columns(
-        dealer_summary.rename(
-            columns={
-                "dealer_name": "Dealer",
-                "dealer_state": "State",
-                "active": "Active",
-                "dealer_enquiry": "Dealer Enquiry",
-                "sales": "Sales",
-                "private_enquiry": "Private Enquiry",
-                "private_sales": "Private Sales",
-                "private_conversion_rate": "Private Conversion Rate",
-                "fleet_enquiry": "Fleet Enquiry",
-                "fleet_sales": "Fleet Sales",
-                "fleet_conversion_rate": "Fleet Conversion Rate",
-                "active_months": "Active Months",
-                "conversion_rate": "Conversion Rate",
-            }
-        ),
-        ["Conversion Rate", "Private Conversion Rate", "Fleet Conversion Rate"],
-    ),
-    use_container_width=True,
-    hide_index=True,
+state_source = (
+    filtered.groupby("dealer_state", dropna=False)[ENQUIRY_COLS]
+    .sum()
+    .reset_index()
+    .melt(id_vars="dealer_state", value_vars=ENQUIRY_COLS, var_name="channel", value_name="enquiries")
 )
+state_source["channel"] = state_source["channel"].map(ENQUIRY_LABELS)
+fig_source_state = px.density_heatmap(
+    state_source,
+    x="channel",
+    y="dealer_state",
+    z="enquiries",
+    histfunc="sum",
+    title="Enquiry Source by State",
+    labels={"channel": "Channel", "dealer_state": "State", "enquiries": "Enquiries"},
+    color_continuous_scale="Blues",
+)
+st.plotly_chart(fig_source_state, use_container_width=True)
 
-st.subheader("Dealer Drill-through - Selected Dealer Only")
-st.caption("Scope: one selected dealer, using the current Month and State filters.")
-
+st.markdown("---")
+st.markdown("## Dealer Drill-through")
+st.caption("Selected dealer view using the current Month, State, and Active filters.")
 dealer_for_view = st.selectbox(
     "Select a dealer",
     options=dealer_summary["dealer_name"].dropna().drop_duplicates().tolist(),
@@ -530,29 +677,29 @@ dealer_monthly = (
     .reset_index()
     .sort_values("month_order")
 )
-dealer_monthly_melted = dealer_monthly.melt(
+dealer_monthly["conversion_rate"] = (dealer_monthly["total_sales"] / dealer_monthly["total_enquiry"]).where(dealer_monthly["total_enquiry"] > 0, 0)
+dealer_monthly["private_conversion_rate"] = (dealer_monthly["private_sales"] / dealer_monthly["private_enquiry"]).where(dealer_monthly["private_enquiry"] > 0, 0)
+dealer_monthly["fleet_conversion_rate"] = (dealer_monthly["fleet_sales"] / dealer_monthly["fleet_enquiry"]).where(dealer_monthly["fleet_enquiry"] > 0, 0)
+
+dealer_trend = dealer_monthly.melt(
     id_vars=["month", "month_order"],
     value_vars=["total_enquiry", "total_sales"],
     var_name="metric",
-    value_name="value",
+    value_name="count",
 )
-dealer_monthly_melted["metric"] = dealer_monthly_melted["metric"].map(
-    {"total_enquiry": "Dealer Enquiry", "total_sales": "Sales"}
-)
-
+dealer_trend["metric"] = dealer_trend["metric"].map({"total_enquiry": "Enquiries", "total_sales": "Sales"})
 fig_dealer_month = px.bar(
-    dealer_monthly_melted,
+    dealer_trend,
     x="month",
-    y="value",
+    y="count",
     color="metric",
     barmode="group",
-    title=f"Monthly Enquiry and Sales - {dealer_for_view}",
-    labels={"month": "Month", "value": "Count", "metric": "Metric"},
+    title=f"Monthly Enquiries and Sales - {dealer_for_view}",
+    labels={"month": "Month", "count": "Count", "metric": "Metric"},
 )
 st.plotly_chart(fig_dealer_month, use_container_width=True)
 
 drill_left, drill_right = st.columns(2)
-
 dealer_enquiry_breakdown = (
     dealer_df.groupby(["month", "month_order"], dropna=False)[ENQUIRY_COLS]
     .sum()
@@ -562,24 +709,22 @@ dealer_enquiry_breakdown = (
 dealer_enquiry_melted = dealer_enquiry_breakdown.melt(
     id_vars=["month", "month_order"],
     value_vars=ENQUIRY_COLS,
-    var_name="enquiry_type",
+    var_name="channel",
     value_name="enquiries",
 )
-dealer_enquiry_melted["enquiry_type"] = dealer_enquiry_melted["enquiry_type"].map(ENQUIRY_LABELS)
-
+dealer_enquiry_melted["channel"] = dealer_enquiry_melted["channel"].map(ENQUIRY_LABELS)
 with drill_left:
     fig_dealer_enquiry = px.bar(
         dealer_enquiry_melted,
         x="month",
         y="enquiries",
-        color="enquiry_type",
+        color="channel",
         title="Dealer Enquiry Breakdown",
-        labels={"month": "Month", "enquiries": "Dealer Enquiry", "enquiry_type": "Type"},
+        labels={"month": "Month", "enquiries": "Enquiries", "channel": "Channel"},
     )
     st.plotly_chart(fig_dealer_enquiry, use_container_width=True)
 
 dealer_sales_melted = make_sales_long(dealer_df, ["month", "month_order"], sales_cols)
-
 with drill_right:
     if dealer_sales_melted.empty:
         st.info("No sales for this dealer in the selected filters.")
@@ -601,10 +746,7 @@ with drill_right:
         st.plotly_chart(fig_dealer_sales, use_container_width=True)
 
 if not dealer_sales_melted.empty:
-    st.markdown("#### Sales Type Detail - Selected Dealer Only")
-    st.caption(f"Scope: {dealer_for_view} only.")
     sales_type_left, sales_type_right = st.columns(2)
-
     dealer_sales_by_type = (
         dealer_sales_melted.groupby(["month", "month_order", "sales_type"], dropna=False)["sales"]
         .sum()
@@ -640,76 +782,65 @@ if not dealer_sales_melted.empty:
         )
         st.plotly_chart(fig_sales_matrix, use_container_width=True)
 
-    sales_detail_table = (
-        dealer_sales_melted.groupby(["month", "month_order", "model", "sales_group", "sales_type"], dropna=False)["sales"]
-        .sum()
-        .reset_index()
-        .sort_values(["month_order", "model", "sales_group", "sales_type"])
-    )
-    st.markdown("##### Sales Detail Table - Selected Dealer Only")
+with st.expander("View selected dealer monthly detail"):
     st.dataframe(
-        sales_detail_table[["month", "model", "sales_group", "sales_type", "sales"]].rename(
-            columns={
+        display_summary_table(
+            dealer_monthly[
+                [
+                    "month",
+                    "total_enquiry",
+                    "total_sales",
+                    "conversion_rate",
+                    "private_enquiry",
+                    "private_sales",
+                    "private_conversion_rate",
+                    "fleet_enquiry",
+                    "fleet_sales",
+                    "fleet_conversion_rate",
+                ]
+            ],
+            {
                 "month": "Month",
-                "model": "Model",
-                "sales_group": "Sales Group",
-                "sales_type": "Sales Type",
-                "sales": "Sales",
-            }
+                "total_enquiry": "Enquiries",
+                "total_sales": "Sales",
+                "conversion_rate": "Conversion Rate",
+                "private_enquiry": "Private Enquiries",
+                "private_sales": "Private Sales",
+                "private_conversion_rate": "Private Conversion Rate",
+                "fleet_enquiry": "Fleet Enquiries",
+                "fleet_sales": "Fleet Sales",
+                "fleet_conversion_rate": "Fleet Conversion Rate",
+            },
+            rate_display_cols,
         ),
         use_container_width=True,
         hide_index=True,
     )
 
-dealer_detail = dealer_monthly.copy()
-dealer_detail["conversion_rate"] = (
-    dealer_detail["total_sales"] / dealer_detail["total_enquiry"]
-).where(dealer_detail["total_enquiry"] > 0, 0)
-dealer_detail["private_conversion_rate"] = (
-    dealer_detail["private_sales"] / dealer_detail["private_enquiry"]
-).where(dealer_detail["private_enquiry"] > 0, 0)
-dealer_detail["fleet_conversion_rate"] = (
-    dealer_detail["fleet_sales"] / dealer_detail["fleet_enquiry"]
-).where(dealer_detail["fleet_enquiry"] > 0, 0)
-st.markdown("##### Monthly Summary Table - Selected Dealer Only")
-st.dataframe(
-    format_rate_columns(
-        dealer_detail[
-            [
-                "month",
-                "total_enquiry",
-                "total_sales",
-                "conversion_rate",
-                "private_enquiry",
-                "private_sales",
-                "private_conversion_rate",
-                "fleet_enquiry",
-                "fleet_sales",
-                "fleet_conversion_rate",
-            ]
-        ].rename(
-            columns={
-                "month": "Month",
-                "total_enquiry": "Dealer Enquiry",
-                "total_sales": "Sales",
-                "conversion_rate": "Conversion Rate",
-                "private_enquiry": "Private Enquiry",
-                "private_sales": "Private Sales",
-                "private_conversion_rate": "Private Conversion Rate",
-                "fleet_enquiry": "Fleet Enquiry",
-                "fleet_sales": "Fleet Sales",
-                "fleet_conversion_rate": "Fleet Conversion Rate",
-            }
-        ),
-        ["Conversion Rate", "Private Conversion Rate", "Fleet Conversion Rate"],
-    ),
-    use_container_width=True,
-    hide_index=True,
-)
+    if not dealer_sales_melted.empty:
+        sales_detail_table = (
+            dealer_sales_melted.groupby(["month", "month_order", "model", "sales_group", "sales_type"], dropna=False)["sales"]
+            .sum()
+            .reset_index()
+            .sort_values(["month_order", "model", "sales_group", "sales_type"])
+        )
+        st.dataframe(
+            sales_detail_table[["month", "model", "sales_group", "sales_type", "sales"]].rename(
+                columns={
+                    "month": "Month",
+                    "model": "Model",
+                    "sales_group": "Sales Group",
+                    "sales_type": "Sales Type",
+                    "sales": "Sales",
+                }
+            ),
+            use_container_width=True,
+            hide_index=True,
+        )
 
 with st.expander("View all filtered raw data"):
     st.caption(
-        "Scope: all raw rows matching the Month and State filters. "
+        "Scope: all raw rows matching the Month, State, and Active filters. "
         "This table is not limited to the selected dealer above."
     )
     detail_cols = ["dealer_name", "dealer_state", "active", "dealer_code", "month", "total_enquiry", "total_sales"] + ENQUIRY_COLS + sales_cols
