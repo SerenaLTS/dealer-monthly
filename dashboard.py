@@ -241,6 +241,15 @@ def load_data(_data_version):
         "active",
         "active_flag",
         "dealerlist_active",
+        "total_enquiry",
+        "total_sales",
+        "private_enquiry",
+        "private_sales",
+        "fleet_enquiry",
+        "fleet_sales",
+        "dealer_demo_sales",
+        "conversion_rate",
+        "private_conversion_rate",
     }
     sales_cols = [col for col in df.columns if col not in id_cols and col not in ENQUIRY_COLS]
     for col in sales_cols:
