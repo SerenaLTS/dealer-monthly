@@ -816,6 +816,12 @@ with drill_left:
     st.plotly_chart(fig_dealer_enquiry, use_container_width=True)
 
 dealer_sales_melted = make_sales_long(dealer_df, ["month", "month_order"], sales_cols)
+dealer_month_order = (
+    dealer_monthly[["month", "month_order"]]
+    .drop_duplicates()
+    .sort_values("month_order")
+)
+dealer_month_labels = dealer_month_order["month"].tolist()
 with drill_right:
     if dealer_sales_melted.empty:
         st.info("No sales for this dealer in the selected filters.")
@@ -826,6 +832,14 @@ with drill_right:
             .reset_index()
             .sort_values("month_order")
         )
+        model_categories = sorted(dealer_sales_by_model["model"].dropna().unique())
+        dealer_sales_by_model = (
+            dealer_month_order.assign(_key=1)
+            .merge(pd.DataFrame({"model": model_categories, "_key": 1}), on="_key", how="left")
+            .drop(columns="_key")
+            .merge(dealer_sales_by_model, on=["month", "month_order", "model"], how="left")
+        )
+        dealer_sales_by_model["sales"] = dealer_sales_by_model["sales"].fillna(0)
         fig_dealer_sales = px.bar(
             dealer_sales_by_model,
             x="month",
@@ -833,6 +847,7 @@ with drill_right:
             color="model",
             title="Dealer Sales Breakdown by Model",
             labels={"month": "Month", "sales": "Sales", "model": "Model"},
+            category_orders={"month": dealer_month_labels},
         )
         st.plotly_chart(fig_dealer_sales, use_container_width=True)
 
@@ -844,6 +859,14 @@ if not dealer_sales_melted.empty:
         .reset_index()
         .sort_values("month_order")
     )
+    sales_type_categories = sorted(dealer_sales_by_type["sales_type"].dropna().unique())
+    dealer_sales_by_type = (
+        dealer_month_order.assign(_key=1)
+        .merge(pd.DataFrame({"sales_type": sales_type_categories, "_key": 1}), on="_key", how="left")
+        .drop(columns="_key")
+        .merge(dealer_sales_by_type, on=["month", "month_order", "sales_type"], how="left")
+    )
+    dealer_sales_by_type["sales"] = dealer_sales_by_type["sales"].fillna(0)
     with sales_type_left:
         fig_dealer_sales_type = px.bar(
             dealer_sales_by_type,
@@ -852,6 +875,7 @@ if not dealer_sales_melted.empty:
             color="sales_type",
             title="Dealer Sales Breakdown by Sales Type",
             labels={"month": "Month", "sales": "Sales", "sales_type": "Sales Type"},
+            category_orders={"month": dealer_month_labels},
         )
         st.plotly_chart(fig_dealer_sales_type, use_container_width=True)
 
@@ -860,6 +884,13 @@ if not dealer_sales_melted.empty:
         .sum()
         .reset_index()
     )
+    dealer_sales_matrix = (
+        pd.DataFrame({"sales_type": sales_type_categories, "_key": 1})
+        .merge(pd.DataFrame({"model": model_categories, "_key": 1}), on="_key", how="left")
+        .drop(columns="_key")
+        .merge(dealer_sales_matrix, on=["sales_type", "model"], how="left")
+    )
+    dealer_sales_matrix["sales"] = dealer_sales_matrix["sales"].fillna(0)
     with sales_type_right:
         fig_sales_matrix = px.density_heatmap(
             dealer_sales_matrix,
@@ -872,6 +903,70 @@ if not dealer_sales_melted.empty:
             color_continuous_scale="Blues",
         )
         st.plotly_chart(fig_sales_matrix, use_container_width=True)
+
+    selected_dealer_sales_total = dealer_sales_melted["sales"].sum()
+    model_breakdown_total = dealer_sales_by_model["sales"].sum()
+    type_breakdown_total = dealer_sales_by_type["sales"].sum()
+    matrix_breakdown_total = dealer_sales_matrix["sales"].sum()
+    check_a, check_b, check_c, check_d = st.columns(4)
+    check_a.metric("Selected Dealer Sales", format_int(selected_dealer_sales_total))
+    check_b.metric("By Model Total", format_int(model_breakdown_total))
+    check_c.metric("By Sales Type Total", format_int(type_breakdown_total))
+    check_d.metric("Model x Type Total", format_int(matrix_breakdown_total))
+
+    monthly_sales_check = dealer_month_order.copy()
+    monthly_sales_check = monthly_sales_check.merge(
+        dealer_monthly[["month", "total_sales"]],
+        on="month",
+        how="left",
+    )
+    monthly_sales_check = monthly_sales_check.merge(
+        dealer_sales_by_model.groupby("month", dropna=False)["sales"]
+        .sum()
+        .reset_index()
+        .rename(columns={"sales": "model_breakdown_sales"}),
+        on="month",
+        how="left",
+    )
+    monthly_sales_check = monthly_sales_check.merge(
+        dealer_sales_by_type.groupby("month", dropna=False)["sales"]
+        .sum()
+        .reset_index()
+        .rename(columns={"sales": "sales_type_breakdown_sales"}),
+        on="month",
+        how="left",
+    )
+    monthly_sales_check[["total_sales", "model_breakdown_sales", "sales_type_breakdown_sales"]] = (
+        monthly_sales_check[["total_sales", "model_breakdown_sales", "sales_type_breakdown_sales"]]
+        .fillna(0)
+        .astype(int)
+    )
+    monthly_sales_check["matched"] = (
+        (monthly_sales_check["total_sales"] == monthly_sales_check["model_breakdown_sales"])
+        & (monthly_sales_check["total_sales"] == monthly_sales_check["sales_type_breakdown_sales"])
+    )
+    with st.expander("View monthly sales reconciliation"):
+        st.dataframe(
+            monthly_sales_check[
+                [
+                    "month",
+                    "total_sales",
+                    "model_breakdown_sales",
+                    "sales_type_breakdown_sales",
+                    "matched",
+                ]
+            ].rename(
+                columns={
+                    "month": "Month",
+                    "total_sales": "Monthly Sales",
+                    "model_breakdown_sales": "By Model",
+                    "sales_type_breakdown_sales": "By Sales Type",
+                    "matched": "Matched",
+                }
+            ),
+            use_container_width=True,
+            hide_index=True,
+        )
 
 with st.expander("View selected dealer monthly detail"):
     st.dataframe(
