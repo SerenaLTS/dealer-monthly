@@ -232,7 +232,6 @@ def load_data():
     df["dealer_demo_sales"] = df[demo_sales_cols].sum(axis=1) if demo_sales_cols else 0
     df["conversion_rate"] = (df["total_sales"] / df["total_enquiry"]).where(df["total_enquiry"] > 0, 0)
     df["private_conversion_rate"] = (df["private_sales"] / df["private_enquiry"]).where(df["private_enquiry"] > 0, 0)
-    df["fleet_conversion_rate"] = (df["fleet_sales"] / df["fleet_enquiry"]).where(df["fleet_enquiry"] > 0, 0)
 
     return df, sales_cols
 
@@ -266,11 +265,11 @@ with st.expander("Data sources, definitions, and limitations"):
         - Sales columns combine two dimensions: first two digits = sales/customer type, remaining text = model
         - Conversion rate = Sales / Dealer enquiry
         - Private conversion = Private Local Delivery sales / non-FleetEnquiry enquiries
-        - Fleet conversion = Fleet, Large Fleet, Local Government, and Company Capitalisation sales / FleetEnquiry
-        - Dealer Demo sales are shown in sales totals and sales breakdowns, but excluded from Private/Fleet conversion
+        - Fleet sales = Fleet, Large Fleet, Local Government, and Company Capitalisation sales
+        - Dealer Demo sales are shown in sales totals and sales breakdowns, but excluded from Private conversion
 
         **Important limitation**
-        - Fleet conversion should be treated as directional only, because FleetEnquiry may not capture every fleet lead that later becomes a fleet sale.
+        - Fleet conversion is not displayed because FleetEnquiry may not capture every fleet lead that later becomes a fleet sale.
         """
     )
 
@@ -306,7 +305,6 @@ def add_conversion_columns(frame):
     out = frame.copy()
     out["conversion_rate"] = (out["sales"] / out["dealer_enquiry"]).where(out["dealer_enquiry"] > 0, 0)
     out["private_conversion_rate"] = (out["private_sales"] / out["private_enquiry"]).where(out["private_enquiry"] > 0, 0)
-    out["fleet_conversion_rate"] = (out["fleet_sales"] / out["fleet_enquiry"]).where(out["fleet_enquiry"] > 0, 0)
     return out
 
 
@@ -332,7 +330,6 @@ monthly = (
 )
 monthly["conversion_rate"] = (monthly["total_sales"] / monthly["total_enquiry"]).where(monthly["total_enquiry"] > 0, 0)
 monthly["private_conversion_rate"] = (monthly["private_sales"] / monthly["private_enquiry"]).where(monthly["private_enquiry"] > 0, 0)
-monthly["fleet_conversion_rate"] = (monthly["fleet_sales"] / monthly["fleet_enquiry"]).where(monthly["fleet_enquiry"] > 0, 0)
 
 dealer_summary = (
     filtered.groupby(["dealer_name", "dealer_state", "active"], dropna=False)
@@ -379,12 +376,18 @@ active_dealers = filtered.loc[filtered["active_flag"], "dealer_name"].nunique()
 active_states = filtered["dealer_state"].nunique()
 conversion_rate = total_sales / total_enquiry if total_enquiry else 0
 private_conversion_rate = private_sales / private_enquiry if private_enquiry else 0
-fleet_conversion_rate = fleet_sales / fleet_enquiry if fleet_enquiry else 0
 
 rankable = dealer_summary[dealer_summary["dealer_enquiry"] > 0].copy()
 top_sales = dealer_summary.sort_values(["sales", "dealer_enquiry"], ascending=False).head(5)
 top_conversion = rankable.sort_values(["conversion_rate", "sales"], ascending=False).head(5)
 bottom_conversion = rankable.sort_values(["conversion_rate", "sales"], ascending=[True, True]).head(5)
+zero_enquiry_dealers = dealer_summary[dealer_summary["dealer_enquiry"] == 0].sort_values(
+    ["sales", "dealer_name"],
+    ascending=[True, True],
+)
+low_enquiry_dealers = dealer_summary[
+    (dealer_summary["dealer_enquiry"] > 0) & (dealer_summary["dealer_enquiry"] < 3)
+].sort_values(["dealer_enquiry", "sales", "dealer_name"], ascending=[True, True, True])
 
 dealer_table_map = {
     "dealer_name": "Dealer",
@@ -398,11 +401,46 @@ dealer_table_map = {
     "private_conversion_rate": "Private Conversion Rate",
     "fleet_enquiry": "Fleet Enquiries",
     "fleet_sales": "Fleet Sales",
-    "fleet_conversion_rate": "Fleet Conversion Rate",
     "active_months": "Active Months",
 }
-rate_display_cols = ["Conversion Rate", "Private Conversion Rate", "Fleet Conversion Rate"]
+rate_display_cols = ["Conversion Rate", "Private Conversion Rate"]
 
+st.markdown("## Dealer Enquiry Watchlist")
+st.caption("Focus list: dealers with no enquiries, plus dealers with fewer than 3 enquiries under the current filters.")
+watch_a, watch_b = st.columns(2)
+watch_cols = ["dealer_name", "dealer_state", "active", "dealer_enquiry", "sales", "conversion_rate"]
+
+with watch_a:
+    st.markdown(f"##### 0 Enquiry Dealers ({len(zero_enquiry_dealers)})")
+    if zero_enquiry_dealers.empty:
+        st.info("No dealers with 0 enquiries under the current filters.")
+    else:
+        st.dataframe(
+            display_summary_table(
+                zero_enquiry_dealers[watch_cols],
+                dealer_table_map,
+                ["Conversion Rate"],
+            ),
+            use_container_width=True,
+            hide_index=True,
+        )
+
+with watch_b:
+    st.markdown(f"##### Low Enquiry Dealers <3 ({len(low_enquiry_dealers)})")
+    if low_enquiry_dealers.empty:
+        st.info("No dealers with 1-2 enquiries under the current filters.")
+    else:
+        st.dataframe(
+            display_summary_table(
+                low_enquiry_dealers[watch_cols],
+                dealer_table_map,
+                ["Conversion Rate"],
+            ),
+            use_container_width=True,
+            hide_index=True,
+        )
+
+st.markdown("---")
 st.markdown("## Executive Summary")
 kpi1, kpi2, kpi3, kpi4 = st.columns(4)
 kpi1.metric("Total Enquiries", format_int(total_enquiry))
@@ -411,7 +449,7 @@ kpi3.metric("Overall Conversion", f"{conversion_rate:.1%}")
 kpi4.metric("Private Conversion", f"{private_conversion_rate:.1%}")
 
 kpi5, kpi6, kpi7, kpi8 = st.columns(4)
-kpi5.metric("Fleet Conversion", f"{fleet_conversion_rate:.1%}")
+kpi5.metric("Fleet Sales", format_int(fleet_sales))
 kpi6.metric("Active Dealers", format_int(active_dealers))
 kpi7.metric("Total Dealers", format_int(total_dealers))
 kpi8.metric("States Covered", format_int(active_states))
@@ -464,7 +502,7 @@ with trend_left:
 
 monthly_conversion = monthly.melt(
     id_vars=["month", "month_order"],
-    value_vars=["conversion_rate", "private_conversion_rate", "fleet_conversion_rate"],
+    value_vars=["conversion_rate", "private_conversion_rate"],
     var_name="conversion_type",
     value_name="rate",
 )
@@ -472,7 +510,6 @@ monthly_conversion["conversion_type"] = monthly_conversion["conversion_type"].ma
     {
         "conversion_rate": "Overall",
         "private_conversion_rate": "Private",
-        "fleet_conversion_rate": "Fleet",
     }
 )
 monthly_conversion["conversion_pct"] = monthly_conversion["rate"] * 100
@@ -524,7 +561,6 @@ with st.expander("View state detail table"):
         "private_conversion_rate": "Private Conversion Rate",
         "fleet_enquiry": "Fleet Enquiries",
         "fleet_sales": "Fleet Sales",
-        "fleet_conversion_rate": "Fleet Conversion Rate",
         "dealers": "Dealers",
         "active_dealers": "Active Dealers",
         "inactive_dealers": "Inactive Dealers",
@@ -533,18 +569,28 @@ with st.expander("View state detail table"):
 
 st.markdown("---")
 st.markdown("## Dealer Ranking")
+dealer_sales_type = make_sales_long(filtered, ["dealer_name"], sales_cols)
+top_sales_dealers = dealer_summary.sort_values("sales", ascending=False).head(15)["dealer_name"].tolist()
+dealer_sales_type_top = dealer_sales_type[dealer_sales_type["dealer_name"].isin(top_sales_dealers)].copy()
+dealer_sales_type_top["dealer_name"] = pd.Categorical(
+    dealer_sales_type_top["dealer_name"],
+    categories=list(reversed(top_sales_dealers)),
+    ordered=True,
+)
+dealer_sales_type_top = dealer_sales_type_top.sort_values("dealer_name")
 ranking_a, ranking_b = st.columns(2)
 with ranking_a:
-    fig_top_sales = px.bar(
-        dealer_summary.sort_values("sales", ascending=False).head(15),
+    fig_top_sales_breakdown = px.bar(
+        dealer_sales_type_top,
         x="sales",
         y="dealer_name",
+        color="sales_type",
         orientation="h",
-        title="Top Dealers by Sales",
-        labels={"sales": "Sales", "dealer_name": "Dealer"},
+        title="Top Dealers by Sales - Buyer Type Breakdown",
+        labels={"sales": "Sales", "dealer_name": "Dealer", "sales_type": "Buyer Type"},
     )
-    fig_top_sales.update_layout(yaxis={"categoryorder": "total ascending"})
-    st.plotly_chart(fig_top_sales, use_container_width=True)
+    fig_top_sales_breakdown.update_layout(yaxis={"categoryorder": "array", "categoryarray": list(reversed(top_sales_dealers))})
+    st.plotly_chart(fig_top_sales_breakdown, use_container_width=True)
 
 with ranking_b:
     fig_top_enquiries = px.bar(
@@ -586,49 +632,6 @@ with ranking_d:
     )
     fig_bottom_conversion.update_layout(yaxis={"categoryorder": "total ascending"})
     st.plotly_chart(fig_bottom_conversion, use_container_width=True)
-
-zero_enquiry_dealers = dealer_summary[dealer_summary["dealer_enquiry"] == 0].sort_values(
-    ["sales", "dealer_name"],
-    ascending=[True, True],
-)
-low_enquiry_dealers = dealer_summary[
-    (dealer_summary["dealer_enquiry"] > 0) & (dealer_summary["dealer_enquiry"] < 3)
-].sort_values(["dealer_enquiry", "sales", "dealer_name"], ascending=[True, True, True])
-
-st.markdown("##### Dealer Enquiry Watchlist")
-st.caption("Focus list: dealers with no enquiries, plus dealers with fewer than 3 enquiries under the current filters.")
-watch_a, watch_b = st.columns(2)
-watch_cols = ["dealer_name", "dealer_state", "active", "dealer_enquiry", "sales", "conversion_rate"]
-
-with watch_a:
-    st.markdown(f"###### 0 Enquiry Dealers ({len(zero_enquiry_dealers)})")
-    if zero_enquiry_dealers.empty:
-        st.info("No dealers with 0 enquiries under the current filters.")
-    else:
-        st.dataframe(
-            display_summary_table(
-                zero_enquiry_dealers[watch_cols],
-                dealer_table_map,
-                ["Conversion Rate"],
-            ),
-            use_container_width=True,
-            hide_index=True,
-        )
-
-with watch_b:
-    st.markdown(f"###### Low Enquiry Dealers <3 ({len(low_enquiry_dealers)})")
-    if low_enquiry_dealers.empty:
-        st.info("No dealers with 1-2 enquiries under the current filters.")
-    else:
-        st.dataframe(
-            display_summary_table(
-                low_enquiry_dealers[watch_cols],
-                dealer_table_map,
-                ["Conversion Rate"],
-            ),
-            use_container_width=True,
-            hide_index=True,
-        )
 
 with st.expander("View dealer detail table"):
     st.dataframe(display_summary_table(dealer_summary, dealer_table_map, rate_display_cols), use_container_width=True, hide_index=True)
@@ -722,7 +725,6 @@ dealer_monthly = (
 )
 dealer_monthly["conversion_rate"] = (dealer_monthly["total_sales"] / dealer_monthly["total_enquiry"]).where(dealer_monthly["total_enquiry"] > 0, 0)
 dealer_monthly["private_conversion_rate"] = (dealer_monthly["private_sales"] / dealer_monthly["private_enquiry"]).where(dealer_monthly["private_enquiry"] > 0, 0)
-dealer_monthly["fleet_conversion_rate"] = (dealer_monthly["fleet_sales"] / dealer_monthly["fleet_enquiry"]).where(dealer_monthly["fleet_enquiry"] > 0, 0)
 
 dealer_trend = dealer_monthly.melt(
     id_vars=["month", "month_order"],
@@ -839,7 +841,6 @@ with st.expander("View selected dealer monthly detail"):
                     "private_conversion_rate",
                     "fleet_enquiry",
                     "fleet_sales",
-                    "fleet_conversion_rate",
                 ]
             ],
             {
@@ -852,7 +853,6 @@ with st.expander("View selected dealer monthly detail"):
                 "private_conversion_rate": "Private Conversion Rate",
                 "fleet_enquiry": "Fleet Enquiries",
                 "fleet_sales": "Fleet Sales",
-                "fleet_conversion_rate": "Fleet Conversion Rate",
             },
             rate_display_cols,
         ),
