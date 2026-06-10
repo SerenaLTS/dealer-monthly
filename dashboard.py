@@ -314,16 +314,6 @@ if st.sidebar.button("Force reload data"):
     st.rerun()
 
 st.sidebar.header("Filters")
-jac_check = df[df["dealer_name"].eq("JAC Motors")]
-if not jac_check.empty:
-    jac_months = sorted(
-        jac_check["month"].dropna().unique(),
-        key=lambda month: MONTH_ORDER.index(month) if month in MONTH_ORDER else 99,
-    )
-    st.sidebar.caption(
-        f"Data check: JAC Motors enquiries {format_int(jac_check['total_enquiry'].sum())} "
-        f"({', '.join(jac_months)})"
-    )
 
 available_months = sorted(df["month"].dropna().unique(), key=lambda x: MONTH_ORDER.index(x) if x in MONTH_ORDER else 99)
 selected_months = st.sidebar.multiselect("Month", available_months, default=available_months)
