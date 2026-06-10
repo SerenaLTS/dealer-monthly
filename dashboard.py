@@ -19,6 +19,10 @@ ENQUIRY_COLS = [
     "OfferEnquiry",
     "FleetEnquiry",
     "ShowroomEnquiry",
+]
+
+ENQUIRY_DETAIL_COLS = [
+    *ENQUIRY_COLS,
     "New",
     "Used",
     "Tradein",
@@ -195,7 +199,7 @@ def load_data():
     df["active"] = df["active"].where(df["active"].isin(["Active", "Inactive"]), "Inactive")
     df["active_flag"] = df["active"].eq("Active")
 
-    for col in ENQUIRY_COLS:
+    for col in ENQUIRY_DETAIL_COLS:
         if col not in df.columns:
             df[col] = 0
         df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
@@ -215,7 +219,7 @@ def load_data():
         "active",
         "active_flag",
     }
-    sales_cols = [col for col in df.columns if col not in id_cols and col not in ENQUIRY_COLS]
+    sales_cols = [col for col in df.columns if col not in id_cols and col not in ENQUIRY_DETAIL_COLS]
     for col in sales_cols:
         df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
 
@@ -261,7 +265,8 @@ with st.expander("Data sources, definitions, and limitations"):
         - `dealer_info.xlsx`: dealer name and state mapping table
 
         **Definitions**
-        - Dealer enquiry = TestDrive + OfferEnquiry + FleetEnquiry + ShowroomEnquiry + New + Used + Tradein
+        - Dealer enquiry = TestDrive + OfferEnquiry + FleetEnquiry + ShowroomEnquiry
+        - New, Used, and Tradein are retained as raw/detail attributes and are not counted as additional enquiries
         - Sales columns combine two dimensions: first two digits = sales/customer type, remaining text = model
         - Conversion rate = Sales / Dealer enquiry
         - Private conversion = Private Local Delivery sales / non-FleetEnquiry enquiries
@@ -886,7 +891,7 @@ with st.expander("View all filtered raw data"):
         "Scope: all raw rows matching the Month, State, and Active filters. "
         "This table is not limited to the selected dealer above."
     )
-    detail_cols = ["dealer_name", "dealer_state", "active", "dealer_code", "month", "total_enquiry", "total_sales"] + ENQUIRY_COLS + sales_cols
+    detail_cols = ["dealer_name", "dealer_state", "active", "dealer_code", "month", "total_enquiry", "total_sales"] + ENQUIRY_DETAIL_COLS + sales_cols
     detail_cols = [col for col in detail_cols if col in filtered.columns]
     raw_detail = filtered[detail_cols].sort_values(["dealer_state", "dealer_name", "month"])
     st.dataframe(raw_detail, use_container_width=True, hide_index=True)
