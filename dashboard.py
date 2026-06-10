@@ -114,10 +114,23 @@ def make_sales_long(source, group_cols, sales_cols):
     return melted[melted["sales"] > 0].copy()
 
 
+DATABASE_PATH = "database.xlsx"
+DEALER_INFO_PATH = "dealer_info.xlsx"
+
+
+def data_version_key():
+    paths = [DATABASE_PATH, DEALER_INFO_PATH]
+    return tuple(
+        (path, os.path.getmtime(path), os.path.getsize(path))
+        for path in paths
+        if os.path.exists(path)
+    )
+
+
 @st.cache_data
-def load_data():
-    database_path = "database.xlsx"
-    dealer_info_path = "dealer_info.xlsx"
+def load_data(_data_version):
+    database_path = DATABASE_PATH
+    dealer_info_path = DEALER_INFO_PATH
 
     if not os.path.exists(database_path):
         raise FileNotFoundError(f"Cannot find {database_path}")
@@ -248,7 +261,7 @@ def format_rate_columns(frame, columns):
     return formatted
 
 
-df, sales_cols = load_data()
+df, sales_cols = load_data(data_version_key())
 
 st.title("T9 Monthly Dealer Dashboard")
 st.caption("Management view of dealer enquiries, sales, conversion, and dealer performance.")
@@ -278,6 +291,16 @@ if st.sidebar.button("Force reload data"):
     st.rerun()
 
 st.sidebar.header("Filters")
+jac_check = df[df["dealer_name"].eq("JAC Motors")]
+if not jac_check.empty:
+    jac_months = sorted(
+        jac_check["month"].dropna().unique(),
+        key=lambda month: MONTH_ORDER.index(month) if month in MONTH_ORDER else 99,
+    )
+    st.sidebar.caption(
+        f"Data check: JAC Motors enquiries {format_int(jac_check['total_enquiry'].sum())} "
+        f"({', '.join(jac_months)})"
+    )
 
 available_months = sorted(df["month"].dropna().unique(), key=lambda x: MONTH_ORDER.index(x) if x in MONTH_ORDER else 99)
 selected_months = st.sidebar.multiselect("Month", available_months, default=available_months)
