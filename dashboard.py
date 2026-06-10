@@ -904,16 +904,6 @@ if not dealer_sales_melted.empty:
         )
         st.plotly_chart(fig_sales_matrix, use_container_width=True)
 
-    selected_dealer_sales_total = dealer_sales_melted["sales"].sum()
-    model_breakdown_total = dealer_sales_by_model["sales"].sum()
-    type_breakdown_total = dealer_sales_by_type["sales"].sum()
-    matrix_breakdown_total = dealer_sales_matrix["sales"].sum()
-    check_a, check_b, check_c, check_d = st.columns(4)
-    check_a.metric("Selected Dealer Sales", format_int(selected_dealer_sales_total))
-    check_b.metric("By Model Total", format_int(model_breakdown_total))
-    check_c.metric("By Sales Type Total", format_int(type_breakdown_total))
-    check_d.metric("Model x Type Total", format_int(matrix_breakdown_total))
-
     monthly_sales_check = dealer_month_order.copy()
     monthly_sales_check = monthly_sales_check.merge(
         dealer_monthly[["month", "total_sales"]],
