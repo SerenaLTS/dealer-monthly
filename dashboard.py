@@ -116,10 +116,11 @@ def make_sales_long(source, group_cols, sales_cols):
 
 DATABASE_PATH = "database.xlsx"
 DEALER_INFO_PATH = "dealer_info.xlsx"
+DEALER_LIST_PATH = "dealerlist.xlsx"
 
 
 def data_version_key():
-    paths = [DATABASE_PATH, DEALER_INFO_PATH]
+    paths = [DATABASE_PATH, DEALER_INFO_PATH, DEALER_LIST_PATH]
     return tuple(
         (path, os.path.getmtime(path), os.path.getsize(path))
         for path in paths
@@ -139,6 +140,7 @@ def load_data(_data_version):
 
     df = pd.read_excel(database_path)
     dealer_info = pd.read_excel(dealer_info_path)
+    dealerlist = pd.read_excel(DEALER_LIST_PATH) if os.path.exists(DEALER_LIST_PATH) else pd.DataFrame()
 
     required_db_cols = {"dealer_code", "Dealername", "month"}
     missing_db_cols = required_db_cols - set(df.columns)
@@ -202,9 +204,20 @@ def load_data(_data_version):
     df["dealer_name"] = df["dealer_name_info"].fillna(by_name["dealer_name_info"]).fillna(df["dealer_name_raw"])
     df["dealer_state"] = df["dealer_state_info"].fillna(by_name["dealer_state_info"]).fillna("Unassigned")
     df["dealer_state"] = df["dealer_state"].astype(str).str.strip().replace({"": "Unassigned", "nan": "Unassigned"})
+    if not dealerlist.empty and {"dealer_name", "active"}.issubset(dealerlist.columns):
+        dealerlist["dealer_name_key"] = dealerlist["dealer_name"].apply(normalise_name)
+        active_lookup = (
+            dealerlist[["dealer_name_key", "active"]]
+            .dropna(how="all")
+            .drop_duplicates("dealer_name_key")
+            .rename(columns={"active": "dealerlist_active"})
+        )
+        df = df.merge(active_lookup, on="dealer_name_key", how="left")
+    else:
+        df["dealerlist_active"] = pd.NA
     if "active" not in df.columns:
         df["active"] = "Inactive"
-    df["active"] = df["active"].astype(str).str.strip().str.title()
+    df["active"] = df["dealerlist_active"].fillna(df["active"]).astype(str).str.strip().str.title()
     df["active"] = df["active"].where(df["active"].isin(["Active", "Inactive"]), "Inactive")
     df["active_flag"] = df["active"].eq("Active")
 
@@ -227,6 +240,7 @@ def load_data(_data_version):
         "dealer_state",
         "active",
         "active_flag",
+        "dealerlist_active",
     }
     sales_cols = [col for col in df.columns if col not in id_cols and col not in ENQUIRY_COLS]
     for col in sales_cols:
